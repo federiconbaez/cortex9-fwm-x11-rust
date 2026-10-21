@@ -6,9 +6,9 @@ cd "$(dirname "$0")/.."
 cargo build --release -q
 B=target/release
 source scripts/display-libre.sh; arrancar_xvfb
-trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$XDG_RUNTIME_DIR"' EXIT
 export DISPLAY=$D
-$B/fwm 2>/tmp/fwm-prueba-${D#:}.log & sleep 0.5
+arrancar_fwm /tmp/fwm-prueba-${D#:}.log $B/fwm
 $B/fwm-demo-ventana terminal "cargo build fwm" 1b2a3a &
 $B/fwm-demo-ventana browser "x.com Cortex9Sur borrador" 2a1b33 &
 $B/fwm-demo-ventana terminal "cargo test fwm" 1b3a2a &

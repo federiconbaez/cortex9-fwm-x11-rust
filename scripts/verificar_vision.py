@@ -1,5 +1,5 @@
 import json, os, socket, sys, time
-ruta = f"/tmp/fwm-{''.join(c for c in os.environ['DISPLAY'] if c.isalnum())}.sock"
+ruta = f"{os.environ.get('XDG_RUNTIME_DIR','/tmp')}/fwm-{''.join(c for c in os.environ['DISPLAY'] if c.isalnum())}.sock"
 def lista():
     s = socket.socket(socket.AF_UNIX); s.connect(ruta); f = s.makefile("rw")
     f.write('{"cmd":"list"}\n'); f.flush(); r = json.loads(f.readline()); s.close(); return r["ventanas"]
