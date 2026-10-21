@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 cargo build --release -q
 B=$PWD/target/release; P=$(mktemp -d)
 source scripts/display-libre.sh; arrancar_xvfb
-trap 'kill $(jobs -p) 2>/dev/null; pkill -f "user-data-dir=$P" 2>/dev/null; rm -rf "$P" "$XDG_RUNTIME_DIR"' EXIT
+trap 'rc=$?; set +e; kill $(jobs -p) 2>/dev/null; pkill -f "user-data-dir=$P" 2>/dev/null; wait 2>/dev/null; rm -rf "$P" "${XDG_RUNTIME_DIR:-}"; exit $rc' EXIT
 export DISPLAY=$D
 arrancar_fwm /tmp/fwm-vision-${D#:}.log env FWM_VISION=${FWM_VISION:-1} $B/fwm
 abrir() { google-chrome --user-data-dir="$P/$1" --no-first-run --no-default-browser-check --disable-gpu \
