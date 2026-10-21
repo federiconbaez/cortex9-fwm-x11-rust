@@ -25,8 +25,11 @@ foco, malo, inyeccion = pedir({"cmd": "focus", "id": vs[0]["id"]}, {"cmd": "focu
 if not foco["ok"]: fallas.append("focus falló")
 if malo["ok"]: fallas.append("focus aceptó una ventana ajena")
 if inyeccion["ok"]: fallas.append("el bus aceptó un comando desconocido")
-(af,) = pedir({"cmd": "affinity", "a": vs[0]["id"], "b": vs[1]["id"]})
-print("  afinidad terminal vs navegador (tema distinto):", round(af["afinidad"], 3))
+ids = {v["titulo"]: v["id"] for v in vs}
+(mismo, distinto) = pedir({"cmd": "affinity", "a": ids["cargo build fwm"], "b": ids["cargo test fwm"]},
+                          {"cmd": "affinity", "a": ids["cargo build fwm"], "b": ids["Cortex9Sur publicado"]})
+print("  afinidad terminal vs terminal:", round(mismo["afinidad"], 3), "| terminal vs navegador:", round(distinto["afinidad"], 3))
+if not mismo["afinidad"] > distinto["afinidad"]: fallas.append("la afinidad no distingue temas")
 print("FALLAS:" if fallas else "OK: 5 ventanas, 3 grupos por tema, sin solapes, bus rechaza lo desconocido")
 for x in fallas: print("  -", x)
 sys.exit(1 if fallas else 0)
