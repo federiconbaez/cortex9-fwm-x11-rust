@@ -5,11 +5,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release -q
-D=:81; B=$PWD/target/release; P=$(mktemp -d)
-Xvfb $D -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
+B=$PWD/target/release; P=$(mktemp -d)
+source scripts/display-libre.sh; arrancar_xvfb
 trap 'kill $(jobs -p) 2>/dev/null; pkill -f "user-data-dir=$P" 2>/dev/null; rm -rf "$P"' EXIT
-sleep 1; export DISPLAY=$D
-FWM_VISION=${FWM_VISION:-1} $B/fwm 2>/tmp/fwm-vision.log & sleep 0.5
+export DISPLAY=$D
+FWM_VISION=${FWM_VISION:-1} $B/fwm 2>/tmp/fwm-vision-${D#:}.log & sleep 0.5
 abrir() { google-chrome --user-data-dir="$P/$1" --no-first-run --no-default-browser-check --disable-gpu \
   --app="data:text/html,<title>Documento</title><body style='background:white;color:black;font:34px sans-serif;margin:24px'>$2" >/dev/null 2>&1 & }
 abrir a "Compilar el crate con cargo build y revisar los warnings de clippy en Rust"

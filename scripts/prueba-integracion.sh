@@ -4,12 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release -q
-D=:77; B=target/release
-Xvfb $D -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 & XV=$!
+B=target/release
+source scripts/display-libre.sh; arrancar_xvfb
 trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
-sleep 1
 export DISPLAY=$D
-$B/fwm 2>/tmp/fwm-prueba.log & sleep 0.5
+$B/fwm 2>/tmp/fwm-prueba-${D#:}.log & sleep 0.5
 $B/fwm-demo-ventana terminal "cargo build fwm" 1b2a3a &
 $B/fwm-demo-ventana browser "x.com Cortex9Sur borrador" 2a1b33 &
 $B/fwm-demo-ventana terminal "cargo test fwm" 1b3a2a &

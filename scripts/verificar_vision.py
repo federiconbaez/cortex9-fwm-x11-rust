@@ -4,7 +4,7 @@ def lista():
     s = socket.socket(socket.AF_UNIX); s.connect(ruta); f = s.makefile("rw")
     f.write('{"cmd":"list"}\n'); f.flush(); r = json.loads(f.readline()); s.close(); return r["ventanas"]
 t0 = time.time(); vs = []
-while time.time() - t0 < float(os.environ.get("ESPERA", "40")):
+while time.time() - t0 < float(os.environ.get("ESPERA", "120")):
     try: vs = lista()
     except OSError: time.sleep(0.5); continue
     if len(vs) == 4 and all(len(v["pantalla"]) > 20 for v in vs): break
