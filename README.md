@@ -27,12 +27,12 @@ Hallazgo de la prueba con Chrome real: en v0.1 las cuatro ventanas de Chrome que
 
 ## Verificar
 ```
-cargo test                                   # 13 tests unitarios
+cargo test                                   # 11 tests unitarios
 cargo clippy --all-targets -- -D warnings    # sin warnings
 bash scripts/prueba-integracion.sh           # Xvfb + fwm + 5 ventanas + chequeo por el bus
 bash scripts/prueba-chrome.sh                # Xvfb + fwm + 4 ventanas reales de Google Chrome + EWMH + xdotool
 bash scripts/prueba-vision.sh                # 4 Chrome con el MISMO título: tienen que separarse por lo que muestran
-FWM_VISION=0 bash scripts/prueba-vision.sh   # control: sin visión la misma prueba tiene que fallar
+FWM_VISION=0 bash scripts/prueba-vision.sh   # control: sin visión falla (mezcla los temas o no lee la pantalla)
 ```
 La prueba de integración falla si las ventanas del mismo tema no quedan juntas, si no hay exactamente 3 grupos, si hay solapes o si el bus acepta un comando desconocido. Deja una captura en `docs/captura-fwm.png`.
 
