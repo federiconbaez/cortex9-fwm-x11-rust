@@ -8,6 +8,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 struct Ventana {
     id: Window,
@@ -26,6 +27,7 @@ struct Wm {
     umbral: f32,
     ventanas: Vec<Ventana>,
     colores: [u32; 6],
+    activa: Option<Window>,
 }
 
 fn texto_prop(conn: &RustConnection, w: Window, prop: Atom) -> String {
@@ -51,6 +53,28 @@ impl Wm {
             titulo = texto_prop(&self.conn, w, AtomEnum::WM_NAME.into());
         }
         let clase = texto_prop(&self.conn, w, AtomEnum::WM_CLASS.into());
+        let transitoria = self
+            .conn
+            .get_property(false, w, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .is_some_and(|r| r.value_len > 0);
+        if transitoria {
+            // Diálogos: flotan centrados, no entran en el agrupamiento.
+            let g = self.conn.get_geometry(w).ok().and_then(|c| c.reply().ok());
+            let (gw, gh) = g.map_or((400, 300), |g| (g.width as u32, g.height as u32));
+            let _ = self.conn.configure_window(
+                w,
+                &ConfigureWindowAux::new()
+                    .x(((self.ancho.saturating_sub(gw)) / 2) as i32)
+                    .y(((self.alto.saturating_sub(gh)) / 2) as i32)
+                    .stack_mode(StackMode::ABOVE),
+            );
+            let _ = self.conn.map_window(w);
+            let _ = self.conn.flush();
+            eprintln!("fwm: diálogo flotante 0x{w:x}");
+            return;
+        }
         let _ = self.conn.change_window_attributes(
             w,
             &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY),
@@ -92,21 +116,38 @@ impl Wm {
                 &ChangeWindowAttributesAux::new().border_pixel(self.colores[g % self.colores.len()]),
             );
         }
+        self.publicar_ewmh();
+        let _ = self.conn.flush();
+    }
+
+    /// EWMH mínimo: así `xdotool`, `wmctrl` y los agentes ven la lista de ventanas y la activa.
+    fn publicar_ewmh(&self) {
+        let lista: Vec<u32> = self.ventanas.iter().map(|v| v.id).collect();
+        let a = self.atom("_NET_CLIENT_LIST");
+        let _ = self.conn.change_property32(PropMode::REPLACE, self.root, a, AtomEnum::WINDOW, &lista);
+        let a = self.atom("_NET_ACTIVE_WINDOW");
+        let activa = self.activa.filter(|w| lista.contains(w)).unwrap_or(0);
+        let _ = self.conn.change_property32(PropMode::REPLACE, self.root, a, AtomEnum::WINDOW, &[activa]);
+    }
+
+    fn enfocar(&mut self, id: Window) {
+        let _ = self.conn.set_input_focus(InputFocus::PARENT, id, x11rb::CURRENT_TIME);
+        let _ = self.conn.configure_window(id, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
+        self.activa = Some(id);
+        self.publicar_ewmh();
         let _ = self.conn.flush();
     }
 
     fn atender(&mut self, linea: &str) -> serde_json::Value {
         match ipc::parsear(linea) {
             Err(e) => json!({"ok": false, "error": e}),
-            Ok(ipc::Peticion::List) => json!({"ok": true, "umbral": self.umbral, "ventanas":
+            Ok(ipc::Peticion::List) => json!({"ok": true, "umbral": self.umbral, "activa": self.activa, "ventanas":
                 self.ventanas.iter().map(|v| json!({"id": v.id, "clase": v.clase, "titulo": v.titulo, "grupo": v.grupo, "rect": v.rect})).collect::<Vec<_>>()}),
             Ok(ipc::Peticion::Focus { id }) => {
                 if !self.ventanas.iter().any(|v| v.id == id) {
                     return json!({"ok": false, "error": "ventana no gestionada"});
                 }
-                let _ = self.conn.set_input_focus(InputFocus::PARENT, id, x11rb::CURRENT_TIME);
-                let _ = self.conn.configure_window(id, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
-                let _ = self.conn.flush();
+                self.enfocar(id);
                 json!({"ok": true})
             }
             Ok(ipc::Peticion::Affinity { a, b }) => {
@@ -148,7 +189,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         umbral: affinity::UMBRAL,
         ventanas: vec![],
         colores: [0x00e5ff, 0xff4fa3, 0xffc94f, 0x7dff6b, 0xb08cff, 0xff7b3d],
+        activa: None,
     };
+    // Ventana de chequeo EWMH: anuncia que hay un WM compatible llamado fwm.
+    let chequeo = wm.conn.generate_id()?;
+    wm.conn.create_window(0, chequeo, root, -1, -1, 1, 1, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new())?;
+    let check = wm.atom("_NET_SUPPORTING_WM_CHECK");
+    let utf8 = wm.atom("UTF8_STRING");
+    let nombre = wm.atom("_NET_WM_NAME");
+    wm.conn.change_property32(PropMode::REPLACE, root, check, AtomEnum::WINDOW, &[chequeo])?;
+    wm.conn.change_property32(PropMode::REPLACE, chequeo, check, AtomEnum::WINDOW, &[chequeo])?;
+    wm.conn.change_property8(PropMode::REPLACE, chequeo, nombre, utf8, b"fwm")?;
+    let soportados: Vec<u32> = ["_NET_SUPPORTED", "_NET_CLIENT_LIST", "_NET_ACTIVE_WINDOW", "_NET_SUPPORTING_WM_CHECK", "_NET_WM_NAME"]
+        .iter()
+        .map(|n| wm.atom(n))
+        .collect();
+    let sup = wm.atom("_NET_SUPPORTED");
+    wm.conn.change_property32(PropMode::REPLACE, root, sup, AtomEnum::ATOM, &soportados)?;
     // Adoptar ventanas que ya estaban mapeadas.
     let hijos = wm.conn.query_tree(wm.root)?.reply()?.children;
     for w in hijos {
@@ -172,6 +229,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match ev {
                 Event::MapRequest(e) => wm.gestionar(e.window),
                 Event::DestroyNotify(e) => wm.soltar(e.window),
+                Event::ClientMessage(e) if e.type_ == wm.atom("_NET_ACTIVE_WINDOW") => {
+                    if wm.ventanas.iter().any(|v| v.id == e.window) {
+                        wm.enfocar(e.window);
+                    }
+                }
                 Event::UnmapNotify(e) if e.event != wm.root => wm.soltar(e.window),
                 Event::ConfigureRequest(e) => {
                     if !wm.ventanas.iter().any(|v| v.id == e.window) {

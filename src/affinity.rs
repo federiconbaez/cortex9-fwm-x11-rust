@@ -17,23 +17,28 @@ fn fnv1a(s: &str) -> u64 {
     h
 }
 
+/// Palabras que aparecen en casi cualquier ventana y no dicen de qué trata.
+/// Las encontró la prueba con Chrome real: su WM_CLASS en modo app trae "text_html_title".
+const VACIAS: &[&str] = &["text", "html", "title", "data", "http", "https", "www", "com", "body", "style", "google", "chrome", "chromium", "the", "and", "untitled"];
+
 pub fn tokens(texto: &str) -> Vec<String> {
     texto
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|t| t.len() >= 3)
+        .filter(|t| t.len() >= 3 && !VACIAS.contains(t))
         .map(str::to_string)
         .collect()
 }
 
-/// Vector normalizado. La clase pesa el doble que el título.
+/// Vector normalizado. El título pesa el doble que la clase: dos ventanas de la misma
+/// aplicación con temas distintos tienen que poder separarse.
 pub fn vector(clase: &str, titulo: &str) -> [f32; DIM] {
     let mut v = [0f32; DIM];
     for t in tokens(clase) {
-        v[(fnv1a(&t) % DIM as u64) as usize] += 2.0;
+        v[(fnv1a(&t) % DIM as u64) as usize] += 1.0;
     }
     for t in tokens(titulo) {
-        v[(fnv1a(&t) % DIM as u64) as usize] += 1.0;
+        v[(fnv1a(&t) % DIM as u64) as usize] += 2.0;
     }
     let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if n > 0.0 {
@@ -111,6 +116,13 @@ mod tests {
         let v = vector("", "");
         assert_eq!(coseno(&v, &v), 0.0);
         assert_eq!(agrupar(&[], UMBRAL), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn misma_app_temas_distintos_se_separan() {
+        let c = "text_html,_title_x google-chrome";
+        let vs = [vector(c, "cargo test fwm"), vector(c, "Cortex9Sur borrador"), vector(c, "cargo build fwm"), vector(c, "Cortex9Sur publicado")];
+        assert_eq!(agrupar(&vs, UMBRAL), vec![0, 1, 0, 1]);
     }
 
     #[test]
