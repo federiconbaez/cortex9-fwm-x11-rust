@@ -3,3 +3,4 @@
 pub mod affinity;
 pub mod ipc;
 pub mod layout;
+pub mod vision;

@@ -33,7 +33,15 @@ pub fn tokens(texto: &str) -> Vec<String> {
 /// Vector normalizado. El título pesa el doble que la clase: dos ventanas de la misma
 /// aplicación con temas distintos tienen que poder separarse.
 pub fn vector(clase: &str, titulo: &str) -> [f32; DIM] {
+    vector_completo(clase, titulo, "")
+}
+
+/// Igual que `vector`, sumando el texto que la ventana muestra en pantalla (OCR) con peso 1.
+pub fn vector_completo(clase: &str, titulo: &str, contenido: &str) -> [f32; DIM] {
     let mut v = [0f32; DIM];
+    for t in tokens(contenido) {
+        v[(fnv1a(&t) % DIM as u64) as usize] += 1.0;
+    }
     for t in tokens(clase) {
         v[(fnv1a(&t) % DIM as u64) as usize] += 1.0;
     }
@@ -51,9 +59,39 @@ pub fn coseno(a: &[f32; DIM], b: &[f32; DIM]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// Baja el peso de lo que comparten casi todas las ventanas abiertas (al menos 3/4 de ellas,
+/// con 3 o más ventanas): una palabra que muestran todas, como "Documento" o el nombre
+/// del navegador, no dice nada sobre el tema. Lo demás conserva su peso.
+pub fn ponderar_idf(vs: &[[f32; DIM]]) -> Vec<[f32; DIM]> {
+    let n = vs.len() as f32;
+    let mut df = [0f32; DIM];
+    for v in vs {
+        for (d, x) in df.iter_mut().zip(v) {
+            if *x > 0.0 {
+                *d += 1.0;
+            }
+        }
+    }
+    vs.iter()
+        .map(|v| {
+            let mut w = [0f32; DIM];
+            for i in 0..DIM {
+                let comun = n >= 3.0 && df[i] * 4.0 >= n * 3.0;
+                w[i] = v[i] * if comun { 0.15 } else { 1.0 };
+            }
+            let norma = w.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norma > 0.0 {
+                w.iter_mut().for_each(|x| *x /= norma);
+            }
+            w
+        })
+        .collect()
+}
+
 /// Devuelve el número de grupo de cada vector. Determinista: los grupos se numeran
 /// por orden de aparición.
 pub fn agrupar(vs: &[[f32; DIM]], umbral: f32) -> Vec<usize> {
+    let vs = &ponderar_idf(vs);
     let n = vs.len();
     let mut padre: Vec<usize> = (0..n).collect();
     fn raiz(p: &mut [usize], mut i: usize) -> usize {
@@ -122,6 +160,19 @@ mod tests {
     fn misma_app_temas_distintos_se_separan() {
         let c = "text_html,_title_x google-chrome";
         let vs = [vector(c, "cargo test fwm"), vector(c, "Cortex9Sur borrador"), vector(c, "cargo build fwm"), vector(c, "Cortex9Sur publicado")];
+        assert_eq!(agrupar(&vs, UMBRAL), vec![0, 1, 0, 1]);
+    }
+
+    #[test]
+    fn titulos_genericos_se_separan_por_contenido() {
+        let c = "google-chrome";
+        let vs = [
+            vector_completo(c, "Documento", "cargo build compila el crate fwm sin errores"),
+            vector_completo(c, "Documento", "borrador del post de Cortex9Sur sobre soberania de datos"),
+            vector_completo(c, "Documento", "cargo test corre los tests del crate fwm"),
+            vector_completo(c, "Documento", "Cortex9Sur publico el post sobre la nube soberana"),
+        ];
+        // Sin contenido serían todos iguales; con contenido quedan dos grupos.
         assert_eq!(agrupar(&vs, UMBRAL), vec![0, 1, 0, 1]);
     }
 

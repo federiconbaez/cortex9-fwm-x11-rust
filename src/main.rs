@@ -1,5 +1,5 @@
 //! fwm: el gestor de ventanas.
-use fwm::{affinity, ipc, layout};
+use fwm::{affinity, ipc, layout, vision};
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -14,6 +14,9 @@ struct Ventana {
     id: Window,
     clase: String,
     titulo: String,
+    contenido: String,
+    huella: u64,
+    leyendo: bool,
     vec: [f32; affinity::DIM],
     grupo: usize,
     rect: layout::Rect,
@@ -28,6 +31,7 @@ struct Wm {
     ventanas: Vec<Ventana>,
     colores: [u32; 6],
     activa: Option<Window>,
+    vision: Option<(std::sync::mpsc::Sender<vision::Pedido>, std::sync::mpsc::Receiver<vision::Lectura>)>,
 }
 
 fn texto_prop(conn: &RustConnection, w: Window, prop: Atom) -> String {
@@ -82,7 +86,7 @@ impl Wm {
         let _ = self.conn.map_window(w);
         let vec = affinity::vector(&clase, &titulo);
         eprintln!("fwm: gestiono 0x{w:x} clase={clase:?} titulo={titulo:?}");
-        self.ventanas.push(Ventana { id: w, clase, titulo, vec, grupo: 0, rect: layout::Rect { x: 0, y: 0, w: 1, h: 1 } });
+        self.ventanas.push(Ventana { id: w, clase, titulo, contenido: String::new(), huella: 0, leyendo: false, vec, grupo: 0, rect: layout::Rect { x: 0, y: 0, w: 1, h: 1 } });
         self.reordenar();
     }
 
@@ -120,6 +124,48 @@ impl Wm {
         let _ = self.conn.flush();
     }
 
+    /// Captura lo que muestra cada ventana y, si cambió, lo manda a leer.
+    fn mirar(&mut self) {
+        let Some((tx, _)) = &self.vision else { return };
+        for v in self.ventanas.iter_mut().filter(|v| !v.leyendo) {
+            let (w, h) = (v.rect.w.saturating_sub(6).max(1), v.rect.h.saturating_sub(6).max(1));
+            let Ok(c) = self.conn.get_image(ImageFormat::Z_PIXMAP, v.id, 0, 0, w as u16, h as u16, !0) else { continue };
+            let Ok(img) = c.reply() else { continue };
+            if img.depth != 24 && img.depth != 32 {
+                continue;
+            }
+            let huella = vision::huella(&img.data);
+            if huella == v.huella {
+                continue;
+            }
+            v.huella = huella;
+            v.leyendo = true;
+            let _ = tx.send(vision::Pedido { id: v.id, ancho: w, alto: h, rgb: vision::bgrx_a_rgb(&img.data) });
+        }
+    }
+
+    /// Incorpora las lecturas terminadas. Devuelve true si cambió algo.
+    fn recibir_lecturas(&mut self) -> bool {
+        let Some((_, rx)) = &self.vision else { return false };
+        let lecturas: Vec<_> = rx.try_iter().collect();
+        let mut cambio = false;
+        for l in lecturas {
+            if let Some(v) = self.ventanas.iter_mut().find(|v| v.id == l.id) {
+                v.leyendo = false;
+                if v.contenido != l.texto {
+                    eprintln!("fwm: 0x{:x} muestra: {:.80}", v.id, l.texto);
+                    v.contenido = l.texto;
+                    v.vec = affinity::vector_completo(&v.clase, &v.titulo, &v.contenido);
+                    cambio = true;
+                }
+            }
+        }
+        if cambio {
+            self.reordenar();
+        }
+        cambio
+    }
+
     /// EWMH mínimo: así `xdotool`, `wmctrl` y los agentes ven la lista de ventanas y la activa.
     fn publicar_ewmh(&self) {
         let lista: Vec<u32> = self.ventanas.iter().map(|v| v.id).collect();
@@ -142,7 +188,7 @@ impl Wm {
         match ipc::parsear(linea) {
             Err(e) => json!({"ok": false, "error": e}),
             Ok(ipc::Peticion::List) => json!({"ok": true, "umbral": self.umbral, "activa": self.activa, "ventanas":
-                self.ventanas.iter().map(|v| json!({"id": v.id, "clase": v.clase, "titulo": v.titulo, "grupo": v.grupo, "rect": v.rect})).collect::<Vec<_>>()}),
+                self.ventanas.iter().map(|v| json!({"id": v.id, "clase": v.clase, "titulo": v.titulo, "pantalla": v.contenido.chars().take(160).collect::<String>(), "grupo": v.grupo, "rect": v.rect})).collect::<Vec<_>>()}),
             Ok(ipc::Peticion::Focus { id }) => {
                 if !self.ventanas.iter().any(|v| v.id == id) {
                     return json!({"ok": false, "error": "ventana no gestionada"});
@@ -190,7 +236,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ventanas: vec![],
         colores: [0x00e5ff, 0xff4fa3, 0xffc94f, 0x7dff6b, 0xb08cff, 0xff7b3d],
         activa: None,
+        vision: None,
     };
+    if std::env::var("FWM_VISION").as_deref() == Ok("0") {
+        eprintln!("fwm: visión apagada por FWM_VISION=0");
+    } else if vision::disponible() {
+        wm.vision = Some(vision::arrancar());
+        eprintln!("fwm: visión activa (OCR spa+eng)");
+    } else {
+        eprintln!("fwm: tesseract no está instalado; agrupo solo por clase y título");
+    }
+    let mut ultima_mirada = std::time::Instant::now();
     // Ventana de chequeo EWMH: anuncia que hay un WM compatible llamado fwm.
     let chequeo = wm.conn.generate_id()?;
     wm.conn.create_window(0, chequeo, root, -1, -1, 1, 1, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new())?;
@@ -252,7 +308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             let v = &mut wm.ventanas[i];
                             v.titulo = t;
-                            v.vec = affinity::vector(&v.clase, &v.titulo);
+                            v.vec = affinity::vector_completo(&v.clase, &v.titulo, &v.contenido);
                             wm.reordenar();
                         }
                     }
@@ -267,6 +323,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(e) => eprintln!("fwm: bus: {e}"),
+        }
+        if ultima_mirada.elapsed() >= Duration::from_millis(1500) {
+            ultima_mirada = std::time::Instant::now();
+            wm.mirar();
+        }
+        if wm.recibir_lecturas() {
+            hubo = true;
         }
         if !hubo {
             std::thread::sleep(Duration::from_millis(8));
