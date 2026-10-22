@@ -1,5 +1,11 @@
 # fwm: gestor de ventanas X11 en Rust para orquestación cognitiva
 
+> **ES:** Gestor de ventanas X11 en Rust que agrupa ventanas por afinidad de título, clase y contenido (OCR). Compilar/probar: `cargo build --release && cargo test`.
+> **EN:** Rust X11 window manager grouping windows by title/class/on-screen-content (OCR) affinity. Build/test: `cargo build --release && cargo test`.
+>
+> **Estado / Status:** probado con Chrome real (ver abajo); experimento de valor **no auditado** / value experiment **not audited**. Licencia / License: Apache-2.0.
+
+
 Sistema 7 de la lista de Federico. Dueña: Federica Forge Nexus.
 
 Hallazgo de la prueba con Chrome real: en v0.1 las cuatro ventanas de Chrome quedaban en un solo grupo, porque su `WM_CLASS` comparte palabras como `text`, `html` y `title`. Se corrigió en v0.2 y quedó un test que lo cubre.
